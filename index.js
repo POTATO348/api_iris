@@ -1,4 +1,4 @@
-require('dotenv').config();
+// index.js
 const express = require("express");
 const mysql = require("mysql2/promise");
 const cors = require("cors");
@@ -9,120 +9,132 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// ✅ CONNECT TO DATABASE
+
 const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 3306,
+  host: "tommy.heliohost.org",
+  user: "zerajerzasouma14_I-ris-Manager",
+  password: "SweetJesus1437~",
+  database: "zerajerzasouma14_iris_db",
+  port: 3306,
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
 });
 
-// ✅ TEST ROUTE
+
+async function generateEmpId() {
+  const [rows] = await pool.query("SELECT MAX(emp_id) AS maxId FROM tbl_user");
+  let next = rows && rows[0] && rows[0].maxId ? rows[0].maxId + 1 : 1000;
+  if (next < 1000) next = 1000;
+  const [exists] = await pool.query("SELECT 1 FROM tbl_user WHERE emp_id = ?", [next]);
+  if (exists.length > 0) return generateEmpId();
+  return next;
+}
+
+
 app.get("/", (req, res) => {
   res.send("✅ API is running successfully!");
 });
 
-// ✅ CREATE ACCOUNT
+
 app.post("/create-account", async (req, res) => {
   try {
-    const { firstName, middleInitial, lastName, email, password, confirmPassword, code } = req.body;
+    const {
+      empId,
+      firstName,
+      middleName,
+      lastName,
+      suffix,
+      email,
+      password,
+      confirmPassword,
+      code,
+    } = req.body;
 
+   
     if (!firstName || !lastName || !email || !password || !confirmPassword || !code) {
-      return res.status(400).json({ error: "Missing required fields" });
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+    if (password !== confirmPassword) {
+      return res.status(400).json({ success: false, message: "Passwords do not match" });
     }
 
-    if (password !== confirmPassword) {
-      return res.status(400).json({ error: "Passwords do not match" });
+
+    const [exists] = await pool.query("SELECT user_id FROM tbl_user WHERE email = ? OR code = ?", [email, code]);
+    if (exists.length > 0) {
+      return res.status(400).json({ success: false, message: "Email or code already exists" });
     }
+
+    const generatedEmp = empId ? empId : await generateEmpId();
+
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const query = `
-      INSERT INTO tbl_user 
-        (first_name, middle_initial, last_name, email, password_hash, code)
-      VALUES (?, ?, ?, ?, ?, ?)
+    
+    const insertSql = `
+      INSERT INTO tbl_user
+        (emp_id, first_name, middle_initial, suffix, last_name, email, password_hash, code)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    const [result] = await pool.execute(query, [
+    const params = [
+      generatedEmp,
       firstName,
-      middleInitial || null,
+      middleName || null,
+      suffix || null,
       lastName,
       email,
       hashedPassword,
-      code
-    ]);
+      code,
+    ];
 
-    res.status(201).json({
-      message: "✅ Account created successfully",
-      empId: result.insertId
+    const [result] = await pool.execute(insertSql, params);
+
+    return res.status(201).json({
+      success: true,
+      message: "Account created successfully",
+      empId: generatedEmp,
+      insertId: result.insertId
     });
-
   } catch (err) {
-    console.error("Error creating account:", err);
-    if (err.code === "ER_DUP_ENTRY") {
-      return res.status(400).json({ error: "Email or code already exists" });
-    }
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Create account error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error", details: err.message });
   }
 });
 
-// ✅ LOGIN
+
 app.post("/login", async (req, res) => {
   try {
     const { empId, code, password } = req.body;
-
     if (!empId || !code || !password) {
-      return res.status(400).json({ error: "EmpID, code, and password are required" });
+      return res.status(400).json({ success: false, message: "Missing credentials" });
     }
 
-    const [rows] = await pool.execute(
-      "SELECT * FROM tbl_user WHERE user_id = ? AND code = ?",
-      [empId, code]
-    );
-
-    if (rows.length === 0) {
-      return res.status(401).json({ error: "Invalid credentials" });
-    }
+    const [rows] = await pool.execute("SELECT * FROM tbl_user WHERE emp_id = ? AND code = ?", [empId, code]);
+    if (rows.length === 0) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
     const user = rows[0];
-    const isMatch = await bcrypt.compare(password, user.password_hash);
+    const passwordMatch = await bcrypt.compare(password, user.password_hash);
+    if (!passwordMatch) return res.status(401).json({ success: false, message: "Invalid password" });
 
-    if (!isMatch) {
-      return res.status(401).json({ error: "Invalid password" });
-    }
-
-    res.json({
-      message: "✅ Login successful",
+    return res.json({
+      success: true,
+      message: "Login successful",
       user: {
-        id: user.user_id,
-        name: `${user.first_name} ${user.last_name}`,
+        empId: user.emp_id,
+        firstName: user.first_name,
+        lastName: user.last_name,
         email: user.email,
         code: user.code
       }
     });
-
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Login error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error", details: err.message });
   }
 });
 
-// ✅ FETCH USERS (optional)
-app.get("/users", async (req, res) => {
-  try {
-    const [rows] = await pool.execute("SELECT * FROM tbl_user ORDER BY user_id ASC");
-    res.json(rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
 
-// ✅ START SERVER
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running at http://0.0.0.0:${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
