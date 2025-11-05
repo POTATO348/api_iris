@@ -1,4 +1,3 @@
-// index.js
 const express = require("express");
 const mysql = require("mysql2/promise");
 const cors = require("cors");
@@ -9,7 +8,6 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// DB pool (set env vars in Render)
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -21,7 +19,6 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
-// helper: generate unique 4-digit emp id
 async function generateEmpId() {
   const [rows] = await pool.query("SELECT MAX(emp_id) AS maxId FROM tbl_user");
   let next = rows && rows[0] && rows[0].maxId ? parseInt(rows[0].maxId) + 1 : 1000;
@@ -33,7 +30,7 @@ async function generateEmpId() {
 
 app.get("/", (req, res) => res.send("✅ API running"));
 
-// CREATE ACCOUNT
+
 app.post("/create-account", async (req, res) => {
   try {
     const { empId, firstName, middleName, lastName, suffix, email, password, confirmPassword, code } = req.body;
